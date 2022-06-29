@@ -28,55 +28,64 @@ void sendMidiClock(RtMidiOut *o, int rate) {
   }
 }
 
-int main()
-{
-  RtMidiOut *midiout = new RtMidiOut();
-
-  float microseconds = 60'000'000.0;
-  unsigned int ppq = 24;
-
-  // Set BPM
+unsigned int selectBPM() {
   unsigned int bpm;
   cout << "Enter BPM" << endl;
   cin >> bpm;
   cout << "You entered: " << bpm << endl;
+  return bpm;
+}
 
-  int midi_clock_rate = static_cast<int>(microseconds / (ppq * bpm));
+unsigned int selectOutputPort(RtMidiOut *midiOut, unsigned int nPorts){
+  unsigned int portNumber;
+  string portName;
+  for (unsigned int i = 0; i < nPorts; i++) {
+    try {
+      portName = midiOut->getPortName(i);
+    } catch (RtMidiError &error) {
+      error.printMessage();
+      return 1;
+    }
+    cout << "(" << i << ") : " << portName << endl;
+  }
 
-  cout << "MIDI Clock rate: " << midi_clock_rate << endl;
+  cin >> portNumber;
+  cout << "\nSelect MIDI output." << endl;
+  return portNumber;
+}
+
+int main()
+{
+  RtMidiOut *midiOut = new RtMidiOut();
+
+  const float microseconds = 60'000'000.0;
+  const unsigned int ppq = 24;
+
+  unsigned int bpm;
+  bpm = selectBPM();
+
+  int clockRate = static_cast<int>(microseconds / (ppq * bpm));
+  cout << "MIDI Clock rate: " << clockRate << endl;
 
   // Check available MIDI output ports.
-  unsigned int nPorts = midiout->getPortCount();
+  unsigned int nPorts = midiOut->getPortCount();
   if ( nPorts == 0 ) {
-    std::cout << "No ports available!\n";
+    cout << "No ports available!\n";
     return 1;
   } else {
     cout << "There are " << nPorts  << " MIDI output sources available:" << endl;
   }
 
-  // Select MIDI output port
-  string portName;
-  for (unsigned int i = 0; i < nPorts; i++) {
-    try {
-      portName = midiout->getPortName(i);
-    } catch (RtMidiError &error) {
-        error.printMessage();
-        return 1;
-    }
-    cout << "(" << i << ") : " << portName << endl;
-  }
-
-  cout << "\nSelect MIDI output." << endl;
-
   unsigned int portNumber;
-  cin >> portNumber;
+  portNumber = selectOutputPort(midiOut, nPorts);
 
-  midiout->openPort(portNumber);
+  midiOut->openPort(portNumber);
 
-  std::thread t1(sendMidiClock, std::ref(midiout), midi_clock_rate);
+  thread t1(sendMidiClock, std::ref(midiOut), clockRate);
   t1.detach();
+  cout << "Clock is running...\n";
 
-  while(true);
+  while (true);
   return 0;
 }
 
