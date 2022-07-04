@@ -5,6 +5,8 @@
 #include <chrono>
 #include <thread>
 #include <math.h>
+#include <jack/jack.h>
+#include <jack/midiport.h>
 #include "deps/RtMidi.h"
 
 // https://www.music.mcgill.ca/~gary/rtmidi/
@@ -54,15 +56,20 @@ unsigned int selectOutputPort(RtMidiOut *midiOut, unsigned int nPorts){
 // accurate clock while using less CPU than full on spin locking.
 // Adapted from Blat Blatnik's blog post:
 // https://blat-blatnik.github.io/computerBear/making-accurate-sleep-function/
-void sendMidiClock(RtMidiOut *midiOut, double clockRateSecs) {
-  const vector<unsigned char> midiClockMessage{0xF8};
+void sendMidiClock(jack_port_t *port, double clockRateSecs) {
+  // const vector<unsigned char> midiClockMessage{0xF8};
+  jack_midi_data_t midiClockMessage = 0xF8;
+
+  cout << jack_port_short_name(port) << endl;
+
+  void *buffer = jack_port_get_buffer(port, 512);
 
   double estimate = 5e-3;
   double mean = 5e-3;
   double m2 = 0;
   int64_t count = 1;
 
-  midiOut->sendMessage(&midiClockMessage);
+  // midiOut->sendMessage(&midiClockMessage, sizeof(midiClockMessage));
   auto prevTime = high_resolution_clock::now();
   while (true) {
     auto nextTime = high_resolution_clock::now();
@@ -71,6 +78,8 @@ void sendMidiClock(RtMidiOut *midiOut, double clockRateSecs) {
 
     auto messageTime = high_resolution_clock::now();
     double waitSeconds = clockRateSecs - ((messageTime - nextTime).count() / 1e9);
+
+    jack_midi_clear_buffer(buffer);
 
     // Sleep (0 CPU)
     while(waitSeconds > estimate) {
@@ -93,10 +102,47 @@ void sendMidiClock(RtMidiOut *midiOut, double clockRateSecs) {
 
     // Spin lock (CPU thrash)
     auto spinStart = high_resolution_clock::now();
-    while ((high_resolution_clock::now() - spinStart).count() / 1e9 < waitSeconds)
-    midiOut->sendMessage(&midiClockMessage);
+    while ((high_resolution_clock::now() - spinStart).count() / 1e9 < waitSeconds);
+    // midiOut->sendMessage(&midiClockMessage, sizeof(midiClockMessage));
+    // int result;
+    // result = jack_midi_event_write(buffer, count, &midiClockMessage, sizeof(midiClockMessage));
+    uint8_t *pbuffer;
+    pbuffer = jack_midi_event_reserve(buffer, 0, 1);
+    pbuffer[0] = midiClockMessage;
     prevTime = nextTime;
   }
+}
+
+jack_client_t *jackClient;
+jack_status_t status;
+jack_port_t *port;
+const unsigned char midiClockMessage[1] = {0xF8};
+
+int process(jack_nframes_t nframes, void* arg) {
+  // TODO: check out using
+  //   JACK's Time functions
+  //   https://jackaudio.org/api/group__TimeFunctions.html#gad52dc447fd9027922d466f695e697660
+
+  // auto static prevTime = high_resolution_clock::now();
+  // auto static nextTime = high_resolution_clock::now();
+  // double *rate = (double *)arg;
+
+  // void* buffer = jack_port_get_buffer(port, nframes);
+  // jack_midi_clear_buffer(buffer);
+
+  // // cout << std::chrono::system_clock::to_time_t(prevTime) << endl;
+  // // cout << std::chrono::system_clock::to_time_t(nextTime) << endl;
+  // printf("Rate: %.2lf microseconds\n", *rate * 1e6);
+  // cout << nframes << endl;
+
+  // nextTime = high_resolution_clock::now();
+  // if ((nextTime - prevTime).count() / 1e9 > *rate) {
+  //   double delta = (nextTime - prevTime).count() / 1e9;
+  //   printf("Time since last message: %.2lf microseconds\n", delta * 1e6);
+  //   jack_midi_event_write(buffer, nframes, midiClockMessage,sizeof(midiClockMessage));
+  //   prevTime = high_resolution_clock::now();
+  // }
+  return 0;
 }
 
 int main()
@@ -123,11 +169,27 @@ int main()
 
   unsigned int portNumber;
   portNumber = selectOutputPort(midiOut, nPorts);
+  string portName = midiOut->getPortName(portNumber);
 
-  midiOut->openPort(portNumber);
+  jackClient = jack_client_open("MidiClock", JackNoStartServer, &status);
+  // port = jack_port_register(jackClient, "Out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+  // jack_set_process_callback(jackClient, process, &clockRate);
+  // jack_activate(jackClient);
 
-  thread t1(sendMidiClock, std::ref(midiOut), clockRate);
-  t1.detach();
+  // jack_port_t *port;
+  port = jack_port_by_name(jackClient, portName.c_str());
+
+  jack_set_process_callback(jackClient, process, &clockRate);
+  jack_activate(jackClient);
+
+  // cout << jack_port_short_name(port) << endl;
+
+  // void *buffer = jack_port_get_buffer(port, 512);
+
+  // midiOut->openPort(portNumber);
+
+  // thread t1(sendMidiClock, std::ref(port), clockRate);
+  // t1.detach();
   cout << "Clock is running...\n";
 
   while (true);
